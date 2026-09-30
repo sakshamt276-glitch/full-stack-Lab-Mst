@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OrderTrace — Live Delivery State Sync</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+  :root{
+    --bg:#0E1613; --panel:#152420; --panel2:#0B1210; --ink:#EAF3EE; --muted:#7FA090;
+    --mint:#3FE0A0; --amber:#E0A83F; --red:#E05A4A; --rule:#22352E;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Space Grotesk',sans-serif;}
+  .mono{font-family:'JetBrains Mono',monospace;}
+  header{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;background:var(--panel2);border-bottom:2px solid var(--mint);flex-wrap:wrap;gap:10px;}
+  header h1{margin:0;font-size:16px;}
+  header p{margin:0;font-size:10.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;letter-spacing:.03em;}
+  .badges{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .badge{font-family:'JetBrains Mono',monospace;font-size:10.5px;padding:5px 9px;border:1px solid var(--rule);border-radius:4px;}
+  .badge.ok{color:var(--mint);border-color:var(--mint);}
+  .badge.err{color:var(--red);border-color:var(--red);}
+  .btn{font-family:'JetBrains Mono',monospace;font-size:10.5px;background:transparent;color:var(--ink);border:1px solid var(--rule);padding:6px 10px;border-radius:4px;cursor:pointer;}
+  .btn:hover{border-color:var(--mint);}
+  input.f{width:100%;font-family:'Space Grotesk',sans-serif;font-size:12.5px;padding:7px 9px;border:1px solid var(--rule);background:var(--panel2);color:var(--ink);border-radius:5px;margin-top:4px;}
+  label.f{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);}
+
+  main{padding:20px;max-width:1240px;margin:0 auto;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:900px){.grid{grid-template-columns:1fr;}}
+  .panel{background:var(--panel);border:1px solid var(--rule);border-radius:10px;}
+  .panel h2{margin:0;padding:12px 16px;font-size:13px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;}
+  .panel .body{padding:16px;}
+  .tag{font-family:'JetBrains Mono',monospace;font-size:9.5px;background:var(--rule);color:var(--muted);padding:2px 7px;border-radius:3px;}
+
+  svg{width:100%;height:auto;display:block;}
+  .eta-row{display:flex;justify-content:space-between;align-items:center;margin-top:12px;}
+  .eta-label{font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;text-transform:uppercase;}
+  .eta-value{font-size:24px;font-weight:700;color:var(--mint);font-family:'JetBrains Mono',monospace;}
+  .stage-name{font-size:14px;font-weight:600;}
+
+  .stepper .step{display:flex;gap:10px;position:relative;padding-bottom:16px;}
+  .stepper .step:last-child{padding-bottom:0;}
+  .rail{width:22px;display:flex;flex-direction:column;align-items:center;}
+  .node{width:22px;height:22px;border-radius:50%;background:var(--rule);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;}
+  .bar{flex:1;width:2px;background:var(--rule);margin-top:2px;}
+  .step.done .node{background:var(--mint);color:#0B1210;}
+  .step.done .bar{background:var(--mint);}
+  .step.active .node{background:var(--amber);color:#0B1210;box-shadow:0 0 0 4px rgba(224,168,63,.2);}
+  .step.cancelled .node{background:var(--red);color:#fff;}
+  .step.cancelled .bar{background:var(--red);}
+  .step .info b{display:block;font-size:12.5px;}
+  .step .info span{font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;}
+
+  .fault-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  .fault-row .btn.danger{border-color:var(--red);color:var(--red);}
+  .fault-row .btn.danger:hover{background:var(--red);color:#fff;}
+  .fault-row .btn.go{border-color:var(--mint);color:var(--mint);}
+  .fault-row .btn.go:hover{background:var(--mint);color:#0B1210;}
+  #retryIndicator{display:none;margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--amber);}
+
+  .meta-strip{display:flex;flex-wrap:wrap;gap:12px;padding:10px 16px;border-bottom:1px solid var(--rule);font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);}
+  .meta-strip b{color:var(--ink);}
+  .envelope{background:var(--panel2);color:#CFEFDC;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.6;overflow-x:auto;border-radius:0 0 10px 10px;}
+  .k{color:#8FD9B4;} .s{color:#E0C08F;} .n{color:#8FB8E0;} .bf{color:#E08F8F;} .bt{color:#8FD9B4;}
+
+  table{width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:10.5px;}
+  th{text-align:left;padding:8px 10px;color:var(--muted);border-bottom:1px solid var(--rule);font-weight:500;}
+  td{padding:7px 10px;border-bottom:1px solid var(--rule);}
+  .ok-txt{color:var(--mint);} .err-txt{color:var(--red);}
+  .top-space{margin-top:16px;}
+
+  .metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .metric-box{background:var(--panel2);border:1px solid var(--rule);border-radius:8px;padding:10px;text-align:center;}
+  .metric-box .v{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--mint);}
+  .metric-box .l{font-size:9.5px;color:var(--muted);text-transform:uppercase;font-family:'JetBrains Mono',monospace;}
+
+  .notes p{font-size:12.5px;line-height:1.7;margin:0 0 10px;}
+  .notes b{color:var(--mint);}
+
+  #mapEl{height:300px;border-radius:8px;filter:saturate(.85) hue-rotate(150deg) invert(1) contrast(.9);}
+  .map-icon{font-size:20px;}
+  .map-note{font-size:10.5px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:8px;}
+
+  .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:10;}
+  .modal{background:var(--panel);border:1px solid var(--mint);border-radius:10px;padding:22px;max-width:440px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;color:var(--ink);}
+  .modal h3{margin-top:0;color:var(--mint);}
+  .modal button{margin-top:14px;}
+
+  #toastHost{position:fixed;bottom:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:20;}
+  .toast{background:var(--panel);border:1px solid var(--mint);color:var(--ink);padding:10px 14px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:11.5px;box-shadow:0 8px 24px rgba(0,0,0,.4);animation:slidein .25s ease;}
+  @keyframes slidein{from{transform:translateY(10px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>OrderTrace <span style="color:var(--mint)">/</span> Live Delivery Console</h1>
+    <p>EXPERIMENT 3.1 &nbsp;—&nbsp; POLLING / WEBSOCKET STATE SYNC &amp; REQUEST TRACING</p>
+  </div>
+  <div class="badges">
+    <span class="badge ok">CORS OPEN (*)</span>
+    <span class="badge ok" id="backendBadge">● ORDER SERVICE UP</span>
+    <span class="badge">BASE :: localhost:8080</span>
+    <span class="badge">STATE :: localStorage (mock DB)</span>
+    <button class="btn" id="modeBtn" onclick="toggleMode()">Mode: REST Polling</button>
+    <button class="btn" onclick="document.getElementById('archModal').style.display='flex'">Architecture</button>
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+    <div class="panel">
+      <h2>Tracking <span class="mono" id="orderIdText">—</span> <span class="tag">FOCUSED ORDER</span></h2>
+      <div class="body">
+        <svg viewBox="0 0 400 130">
+          <path d="M 30 105 Q 140 25 200 75 T 370 35" fill="none" stroke="var(--rule)" stroke-width="5" stroke-linecap="round" stroke-dasharray="2 10"/>
+          <text x="18" y="122" font-size="16">🍔</text>
+          <text x="352" y="28" font-size="16">🏠</text>
+          <circle id="courierDot" cx="30" cy="105" r="8" fill="#3FE0A0"/>
+          <text id="courierIcon" x="30" y="105" font-size="14" text-anchor="middle" dy="-12">🛵</text>
+        </svg>
+        <div class="eta-row">
+          <div>
+            <div class="eta-label">Stage</div>
+            <div class="stage-name" id="stageName">Order Placed</div>
+          </div>
+          <div style="text-align:right">
+            <div class="eta-label">ETA</div>
+            <div class="eta-value" id="etaValue">24:00</div>
+          </div>
+        </div>
+        <div class="stepper top-space" id="stepper"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Place / Control Order <span class="tag">ACTS ON FOCUSED ORDER</span></h2>
+      <div class="body">
+        <label class="f">Items (comma separated)</label>
+        <input class="f" id="itemsInput" placeholder="e.g. 2x Cheese Pizza, 1x Garlic Bread">
+        <label class="f">Delivery Address</label>
+        <input class="f" id="addressInput" placeholder="e.g. 221B Baker Street">
+        <div class="fault-row">
+          <button class="btn go" onclick="placeOrder()">Place New Order</button>
+          <button class="btn danger" onclick="cancelOrder()">Cancel Order</button>
+          <button class="btn go" onclick="toggleBackend()">Toggle Backend</button>
+          <button class="btn danger" onclick="simulateDisconnect()">Simulate Disconnect</button>
+          <button class="btn danger" onclick="simulateDelay()">Simulate Delay Spike</button>
+          <button class="btn go" onclick="forceDelivered()">Force Delivered</button>
+        </div>
+        <div id="retryIndicator"></div>
+        <p class="map-note" style="margin-top:10px">Placing an order does not stop other active orders — they keep progressing in the background. Use "Track" in Order History to switch which one is focused above.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid top-space">
+    <div class="panel">
+      <h2>Live Metrics <span class="tag">OBSERVABILITY</span></h2>
+      <div class="body">
+        <div class="metric-grid">
+          <div class="metric-box"><div class="v" id="mTotal">0</div><div class="l">Requests</div></div>
+          <div class="metric-box"><div class="v" id="mSuccess">0</div><div class="l">Success</div></div>
+          <div class="metric-box"><div class="v" id="mError">0</div><div class="l">Errors</div></div>
+          <div class="metric-box"><div class="v" id="mAvgLat">—</div><div class="l">Avg Latency</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Order Detail</h2>
+      <div class="body">
+        <div class="tag">ITEMS</div>
+        <div class="mono" id="orderItemsList" style="font-size:11.5px;margin:6px 0 10px"></div>
+        <div class="tag">ADDRESS</div>
+        <p class="mono" style="font-size:11.5px;margin:6px 0 0" id="orderAddressText">—</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel top-space">
+    <h2>Order History <span class="tag">ALL ORDERS TICK CONCURRENTLY</span></h2>
+    <table>
+      <thead><tr><th>Order ID</th><th>Items</th><th>Address</th><th>Status</th><th>Placed</th><th></th></tr></thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+  </div>
+
+  <div class="panel top-space">
+    <h2>Live Tracking Map <span class="tag">SIMULATED GPS</span></h2>
+    <div class="body">
+      <div id="mapEl"></div>
+      <div class="map-note">Route/pins are illustrative — the courier marker follows the same shared route, driven by the focused order's stage/ETA.</div>
+    </div>
+  </div>
+
+  <div class="panel top-space">
+    <h2>Request/Response Inspector <span class="tag">FOCUSED ORDER ONLY</span></h2>
+    <div class="meta-strip" id="metaStrip">
+      <span>METHOD: <b id="mMethod">—</b></span>
+      <span>ENDPOINT: <b id="mEndpoint">—</b></span>
+      <span>STATUS: <b id="mStatus">—</b></span>
+      <span>CORR-ID: <b id="mTrace">—</b></span>
+      <span>LATENCY: <b id="mLatency">—</b></span>
+    </div>
+    <div class="envelope" id="envelope">// awaiting first request…</div>
+  </div>
+
+  <div class="panel top-space">
+    <h2>Correlation ID &amp; Trace Log
+      <span>
+        <button class="btn" onclick="exportLog()">Export JSON</button>
+        <button class="btn" onclick="clearLog()">Clear</button>
+      </span>
+    </h2>
+    <table>
+      <thead><tr><th>Time</th><th>Method</th><th>Endpoint</th><th>Status</th><th>Latency</th><th>Corr-ID</th></tr></thead>
+      <tbody id="logBody"></tbody>
+    </table>
+  </div>
+
+  <div class="panel top-space notes">
+    <h2>Experiment Notes</h2>
+    <div class="body">
+      <p><b>Concurrency:</b> every order ticks independently in a single global loop; only one is "focused" for the inspector, map, and detail panels at a time — placing or tracking an order changes focus without pausing the rest.</p>
+      <p><b>Pattern:</b> client polls (or receives simulated WebSocket pushes) for order state instead of the server holding an open connection per request.</p>
+      <p><b>Envelope contract:</b> every response follows {success, data/message, correlationId, timestamp} so the client parses one shape regardless of endpoint.</p>
+      <p><b>Resilience:</b> when the backend goes down, requests fail and the client retries with exponential backoff (2s → 4s → 8s → capped at 16s).</p>
+      <p><b>Persistence:</b> all orders and which one is focused are written to localStorage on every change, so a refresh restores state — standing in for a real database.</p>
+      <p><b>Tradeoff demoed live:</b> in Polling mode every tick on the focused order is logged; in WebSocket mode only state-change events are logged.</p>
+    </div>
+  </div>
+</main>
+
+<div class="modal-bg" id="archModal">
+  <div class="modal">
+    <h3>Architecture</h3>
+    <b>Browser</b> → GET /api/orders/{id}/status (or WS push) →<br>
+    <b>Order Service</b> (mock, in-memory state machine, handles N concurrent orders) →<br>
+    <b>State Store</b> (localStorage stands in for Postgres/Redis)<br><br>
+    Responses use a standardized envelope with a correlation ID for request tracing. On failure, the client retries with exponential backoff.
+    <br><button class="btn" onclick="document.getElementById('archModal').style.display='none'">Close</button>
+  </div>
+</div>
+<div id="toastHost"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const STAGES = [
+  {name:"Order Placed", icon:"1", eta:24*60},
+  {name:"Confirmed by Restaurant", icon:"2", eta:20*60},
+  {name:"Preparing your food", icon:"3", eta:15*60},
+  {name:"Picked up by courier", icon:"4", eta:11*60},
+  {name:"On the way", icon:"5", eta:6*60},
+  {name:"Delivered", icon:"✓", eta:0}
+];
+let orders = {}, focusedId = null, orderSeq = 1;
+let backendUp = true, backoff = 0, mode = 'poll', pollHandle = null;
+let metrics = {total:0, success:0, error:0, latencySum:0, latencyCount:0};
+let logEntries = [];
+
+const path = document.querySelector("path");
+const pathLen = path.getTotalLength();
+let leafletMap = null, courierMarker = null;
+const ROUTE_WAYPOINTS = [
+  [12.9716,77.5946],[12.9742,77.5978],[12.9761,77.6009],
+  [12.9789,77.6021],[12.9804,77.6035],[12.9816,77.6046]
+];
+
+function focused(){ return orders[focusedId]; }
+function corrId(){ return 'trc-' + Math.random().toString(36).slice(2,8); }
+function fakeLatency(){ return Math.round(40 + Math.random()*90); }
+function nowTime(){ return new Date().toLocaleTimeString(); }
+function fmt(s){ s=Math.max(0,s); return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+function newOrderId(){ return 'FT-' + (58000 + orderSeq++); }
+
+function persist(){
+  localStorage.setItem('ot_state_v2', JSON.stringify({orders, focusedId, orderSeq}));
+}
+function loadPersisted(){
+  const raw = localStorage.getItem('ot_state_v2');
+  if(raw){
+    try{
+      const p = JSON.parse(raw);
+      if(p.orders && Object.keys(p.orders).length){ orders = p.orders; focusedId = p.focusedId; orderSeq = p.orderSeq||1; return; }
+    }catch(e){}
+  }
+  const id = newOrderId();
+  orders[id] = {id, items:["2x Smash Burger","1x Loaded Fries","1x Iced Tea"], address:"221B Baker Street", current:0, etaSeconds:STAGES[0].eta, cancelled:false, deliveredAt:null, placedAt:new Date().toISOString()};
+  focusedId = id;
+}
+
+function highlightJSON(obj){
+  let s = JSON.stringify(obj, null, 2).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  s = s.replace(/"([^"]+)":/g, '<span class="k">"$1"</span>:');
+  s = s.replace(/: "([^"]*)"/g, ': <span class="s">"$1"</span>');
+  s = s.replace(/: (\d+(\.\d+)?)/g, ': <span class="n">$1</span>');
+  s = s.replace(/: true/g, ': <span class="bt">true</span>').replace(/: false/g, ': <span class="bf">false</span>');
+  return s;
+}
+function logRow(method, endpoint, status, latency, id){
+  const row = document.createElement('tr');
+  const cls = (status === 'ERR' || parseInt(status) >= 400) ? 'err-txt' : 'ok-txt';
+  row.innerHTML = `<td>${nowTime()}</td><td>${method}</td><td>${endpoint}</td><td class="${cls}">${status}</td><td>${latency} ms</td><td>${id}</td>`;
+  document.getElementById('logBody').prepend(row);
+}
+function showEnvelope(method, endpoint, status, body, id, latency){
+  document.getElementById('mMethod').textContent = method;
+  document.getElementById('mEndpoint').textContent = endpoint;
+  document.getElementById('mStatus').textContent = status;
+  document.getElementById('mTrace').textContent = id;
+  document.getElementById('mLatency').textContent = latency + ' ms';
+  document.getElementById('envelope').innerHTML = highlightJSON(body);
+  logRow(method, endpoint, status, latency, id);
+  logEntries.push({time:new Date().toISOString(), method, endpoint, status, latency, correlationId:id});
+  metrics.total++;
+  const isErr = status === 'ERR' || parseInt(status) >= 400;
+  if(isErr) metrics.error++; else metrics.success++;
+  if(latency){ metrics.latencySum += latency; metrics.latencyCount++; }
+  renderMetrics();
+}
+function renderMetrics(){
+  document.getElementById('mTotal').textContent = metrics.total;
+  document.getElementById('mSuccess').textContent = metrics.success;
+  document.getElementById('mError').textContent = metrics.error;
+  document.getElementById('mAvgLat').textContent = metrics.latencyCount ? Math.round(metrics.latencySum/metrics.latencyCount)+' ms' : '—';
+}
+function clearLog(){
+  document.getElementById('logBody').innerHTML = '';
+  logEntries = [];
+  metrics = {total:0, success:0, error:0, latencySum:0, latencyCount:0};
+  renderMetrics();
+}
+function exportLog(){
+  const blob = new Blob([JSON.stringify(logEntries, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'trace-log.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+function showToast(msg){
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+  document.getElementById('toastHost').appendChild(t);
+  setTimeout(()=>t.remove(), 3000);
+}
+
+function renderStepper(){
+  const f = focused();
+  document.getElementById('stepper').innerHTML = STAGES.map((s,i)=>{
+    let cls = i < f.current ? 'done' : (i === f.current ? 'active' : '');
+    if(f.cancelled && i >= f.current) cls = 'cancelled';
+    const label = f.cancelled && i === f.current ? '<span style="color:var(--red)">cancelled</span>' : (i===f.current?'<span>in progress…</span>':(i<f.current?'<span>done</span>':''));
+    return `<div class="step ${cls}"><div class="rail"><div class="node">${f.cancelled && i===f.current ? '✕' : (i<f.current?'✓':s.icon)}</div>${i<STAGES.length-1?'<div class="bar"></div>':''}</div>
+      <div class="info"><b>${s.name}</b>${label}</div></div>`;
+  }).join('');
+}
+function moveCourier(){
+  const f = focused();
+  const pt = path.getPointAtLength(pathLen * (f.current/(STAGES.length-1)));
+  document.getElementById('courierDot').setAttribute('cx', pt.x);
+  document.getElementById('courierDot').setAttribute('cy', pt.y);
+  document.getElementById('courierIcon').setAttribute('x', pt.x);
+  document.getElementById('courierIcon').setAttribute('y', pt.y);
+}
+function updateStageEtaText(){
+  const f = focused();
+  document.getElementById('stageName').textContent = f.cancelled ? 'Order Cancelled' : STAGES[f.current].name;
+  document.getElementById('etaValue').textContent = fmt(f.etaSeconds);
+}
+function updateBackendBadge(){
+  const f = focused();
+  const b = document.getElementById('backendBadge');
+  if(f.cancelled){ b.textContent = '✕ ORDER CANCELLED'; b.className = 'badge err'; return; }
+  if(f.current === STAGES.length-1){ b.textContent = '✓ DELIVERED'; b.className = 'badge ok'; return; }
+  b.textContent = backendUp ? '● ORDER SERVICE UP' : '● ORDER SERVICE DOWN';
+  b.className = 'badge ' + (backendUp ? 'ok' : 'err');
+}
+function renderOrderDetail(){
+  const f = focused();
+  document.getElementById('orderIdText').textContent = f.id;
+  document.getElementById('orderItemsList').innerHTML = f.items.map(i=>`<div>${i}</div>`).join('');
+  document.getElementById('orderAddressText').textContent = f.address;
+}
+function renderHistory(){
+  const rows = Object.values(orders).sort((a,b)=> new Date(b.placedAt) - new Date(a.placedAt));
+  document.getElementById('historyBody').innerHTML = rows.map(o=>{
+    const status = o.cancelled ? 'CANCELLED' : (o.current === STAGES.length-1 ? 'DELIVERED' : 'ACTIVE');
+    const cls = status==='DELIVERED' ? 'ok-txt' : (status==='CANCELLED' ? 'err-txt' : '');
+    const isFocused = o.id === focusedId;
+    return `<tr style="${isFocused?'background:rgba(63,224,160,.08)':''}"><td>${o.id}</td><td>${o.items.join(', ')}</td><td>${o.address}</td><td class="${cls}">${status}</td><td>${new Date(o.placedAt).toLocaleTimeString()}</td><td>${isFocused?'<span class="tag">TRACKING</span>':'<button class="btn" onclick="focusOrder(\''+o.id+'\')">Track</button>'}</td></tr>`;
+  }).join('');
+}
+function pointAtFraction(points, frac){
+  const latlngs = points.map(p => L.latLng(p[0], p[1]));
+  const dists = []; let total = 0;
+  for(let i=0;i<latlngs.length-1;i++){ const d = latlngs[i].distanceTo(latlngs[i+1]); dists.push(d); total += d; }
+  let target = total * frac, acc = 0;
+  for(let i=0;i<dists.length;i++){
+    if(acc + dists[i] >= target || i === dists.length-1){
+      const segFrac = dists[i] ? (target - acc) / dists[i] : 0;
+      const a = latlngs[i], b = latlngs[i+1];
+      return L.latLng(a.lat + (b.lat-a.lat)*segFrac, a.lng + (b.lng-a.lng)*segFrac);
+    }
+    acc += dists[i];
+  }
+  return latlngs[latlngs.length-1];
+}
+function initMap(){
+  leafletMap = L.map('mapEl', {zoomControl:false, attributionControl:false}).setView(ROUTE_WAYPOINTS[2], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap);
+  L.marker(ROUTE_WAYPOINTS[0], {icon:L.divIcon({className:'', html:'<span class="map-icon">🍔</span>', iconSize:[24,24]})}).addTo(leafletMap);
+  L.marker(ROUTE_WAYPOINTS[ROUTE_WAYPOINTS.length-1], {icon:L.divIcon({className:'', html:'<span class="map-icon">🏠</span>', iconSize:[24,24]})}).addTo(leafletMap);
+  L.polyline(ROUTE_WAYPOINTS, {color:'#3FE0A0', weight:4, dashArray:'2 10'}).addTo(leafletMap);
+  courierMarker = L.marker(ROUTE_WAYPOINTS[0], {icon:L.divIcon({className:'', html:'<span class="map-icon">🛵</span>', iconSize:[24,24]})}).addTo(leafletMap);
+  leafletMap.fitBounds(ROUTE_WAYPOINTS, {padding:[20,20]});
+}
+function updateMapCourier(){
+  if(!courierMarker) return;
+  const f = focused();
+  const frac = f.current / (STAGES.length-1);
+  courierMarker.setLatLng(pointAtFraction(ROUTE_WAYPOINTS, frac));
+}
+function renderAll(){
+  renderStepper(); moveCourier(); updateStageEtaText(); renderOrderDetail(); renderHistory(); updateBackendBadge(); updateMapCourier(); persist();
+}
+
+function showRetry(ms){
+  const el = document.getElementById('retryIndicator');
+  el.style.display = 'block';
+  el.textContent = 'Backend down — retrying in ' + Math.round(ms/1000) + 's…';
+}
+function hideRetry(){ document.getElementById('retryIndicator').style.display = 'none'; }
+
+function tickAll(){
+  if(!backendUp){
+    backoff = backoff ? Math.min(backoff*2, 16000) : 2000;
+    showRetry(backoff);
+    const f = focused();
+    const id = corrId();
+    showEnvelope('GET', '/api/orders/'+(f?f.id:'unknown')+'/status', 'ERR', {success:false, message:"Network error / order service unreachable", correlationId:id, timestamp:new Date().toISOString()}, id, 0);
+    pollHandle = setTimeout(tickAll, backoff);
+    return;
+  }
+  backoff = 0; hideRetry();
+  const f0 = focused();
+  const prevStage = f0 ? f0.current : null;
+  Object.values(orders).forEach(o=>{
+    if(o.cancelled || o.current === STAGES.length-1) return;
+    o.etaSeconds = Math.max(0, o.etaSeconds - 1);
+    if(o.current < STAGES.length-1 && o.etaSeconds <= STAGES[o.current+1].eta){
+      o.current++;
+      if(o.current === STAGES.length-1) o.deliveredAt = new Date().toISOString();
+    }
+  });
+  renderAll();
+  const f = focused();
+  if(f){
+    const changed = prevStage !== null && f.current !== prevStage;
+    if(changed) showToast(f.current === STAGES.length-1 ? ('Order '+f.id+' delivered!') : STAGES[f.current].name);
+    if(!f.cancelled && (mode === 'poll' || changed)){
+      const id = corrId();
+      const endpoint = mode === 'poll' ? '/api/orders/'+f.id+'/status' : '/ws/orders/'+f.id;
+      showEnvelope(mode==='poll'?'GET':'PUSH', endpoint, '200', {success:true, stage:STAGES[f.current].name, etaSeconds:f.etaSeconds, correlationId:id, timestamp:new Date().toISOString()}, id, fakeLatency());
+    }
+  }
+  pollHandle = setTimeout(tickAll, 1000);
+}
+
+function focusOrder(id){
+  if(!orders[id]) return;
+  focusedId = id;
+  renderAll();
+  showToast('Now tracking ' + id);
+}
+function placeOrder(){
+  const itemsRaw = document.getElementById('itemsInput').value.trim();
+  const address = document.getElementById('addressInput').value.trim() || 'No address provided';
+  const items = itemsRaw ? itemsRaw.split(',').map(s=>s.trim()).filter(Boolean) : ["2x Smash Burger","1x Loaded Fries","1x Iced Tea"];
+  const id = newOrderId();
+  orders[id] = {id, items, address, current:0, etaSeconds:STAGES[0].eta, cancelled:false, deliveredAt:null, placedAt:new Date().toISOString()};
+  focusedId = id;
+  backendUp = true; backoff = 0; hideRetry();
+  renderAll();
+  const cid = corrId();
+  showEnvelope('POST', '/api/orders', '201', {success:true, message:"Order placed", orderId:id, items, address, correlationId:cid, timestamp:new Date().toISOString()}, cid, fakeLatency());
+  showToast('Order '+id+' placed — now tracking it');
+}
+function cancelOrder(){
+  const f = focused();
+  if(!f || f.cancelled || f.current === STAGES.length-1) return;
+  f.cancelled = true;
+  renderAll();
+  const id = corrId();
+  showEnvelope('DELETE', '/api/orders/'+f.id, '200', {success:true, message:"Order cancelled by user", correlationId:id, timestamp:new Date().toISOString()}, id, fakeLatency());
+  showToast('Order '+f.id+' cancelled');
+}
+function forceDelivered(){
+  const f = focused();
+  if(!f || f.cancelled) return;
+  f.current = STAGES.length-1; f.etaSeconds = 0; f.deliveredAt = new Date().toISOString();
+  renderAll();
+  const id = corrId();
+  showEnvelope('PATCH', '/api/orders/'+f.id+'/status', '200', {success:true, message:"Order marked delivered", correlationId:id, timestamp:new Date().toISOString()}, id, fakeLatency());
+  showToast('Order delivered!');
+}
+function toggleBackend(){
+  backendUp = !backendUp;
+  updateBackendBadge();
+  if(backendUp){ backoff = 0; hideRetry(); clearTimeout(pollHandle); pollHandle = setTimeout(tickAll, 1000); }
+}
+function simulateDisconnect(){
+  const f = focused();
+  const id = corrId();
+  showEnvelope('GET', '/api/orders/'+(f?f.id:'unknown')+'/status', '504', {success:false, message:"Courier device timeout — last ping lost", correlationId:id, timestamp:new Date().toISOString()}, id, 800);
+}
+function simulateDelay(){
+  const f = focused();
+  if(!f || f.cancelled) return;
+  f.etaSeconds += 180;
+  const id = corrId();
+  showEnvelope('PATCH', '/api/orders/'+f.id+'/eta', '200', {success:true, message:"ETA recalculated: traffic delay detected", addedSeconds:180, correlationId:id, timestamp:new Date().toISOString()}, id, fakeLatency());
+  renderAll();
+}
+function toggleMode(){
+  mode = mode === 'poll' ? 'ws' : 'poll';
+  document.getElementById('modeBtn').textContent = 'Mode: ' + (mode==='poll' ? 'REST Polling' : 'WebSocket (sim)');
+  const f = focused();
+  if(mode==='ws' && f && !f.cancelled && f.current < STAGES.length-1){
+    const id = corrId();
+    showEnvelope('WS', '/ws/orders/'+f.id, '101', {success:true, message:"Connection upgraded to WebSocket", correlationId:id, timestamp:new Date().toISOString()}, id, fakeLatency());
+  }
+}
+
+loadPersisted();
+initMap();
+renderAll();
+pollHandle = setTimeout(tickAll, 1000);
+</script>
+</body>
+</html>
